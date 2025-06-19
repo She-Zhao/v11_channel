@@ -21,9 +21,20 @@ if __name__ == '__main__':
     
     base_lr = 0.01 if args.optimizer == 'SGD' else 0.001
     adjusted_lr = base_lr * (args.batch / 64)  # 线性缩放
-    
+
+    # # 在model.train()前添加
+    # print("=== 数据配置验证 ===")
+    # print(f"Data YAML路径: {args.data}")
+    # with open(args.data) as f:
+    #     print(f.read())
+
+    # from ultralytics.data.utils import check_det_dataset
+    # dataset = check_det_dataset(args.data)
+    # print(f"实际训练路径: {dataset['train']}")  # 这里会显示真实路径
+    # import pdb; pdb.set_trace()
     # 执行训练
     model.train(
+        multi_img=True,
         lr0=adjusted_lr,  # 显式设置适配后的学习率
         warmup_epochs=3,  # 学习率预热
         warmup_momentum=0.8,  # 动量预热        
@@ -40,7 +51,7 @@ if __name__ == '__main__':
         amp=True,
         project='runs/train',
         name=args.name,
-        device=[0, ]
+        device=[0, ],
     )
 
     # model.train(

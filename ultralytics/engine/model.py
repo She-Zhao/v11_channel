@@ -82,6 +82,7 @@ class Model(torch.nn.Module):
         model: Union[str, Path, "Model"] = "yolo11n.pt",
         task: str = None,
         verbose: bool = False,
+        multi_img = False
     ) -> None:
         """
         Initialize a new instance of the YOLO model class.
@@ -794,6 +795,7 @@ class Model(torch.nn.Module):
             self.model = self.trainer.model
 
         self.trainer.hub_session = self.session  # attach optional HUB session
+        import pdb; pdb.set_trace()
         self.trainer.train()
         # Update model and cfg after training
         if RANK in {-1, 0}:

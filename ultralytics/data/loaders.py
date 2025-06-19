@@ -20,6 +20,8 @@ from ultralytics.utils import IS_COLAB, IS_KAGGLE, LOGGER, ops
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.patches import imread
 
+import re
+from ultralytics.data.dataset import IMAGE_MODE
 
 @dataclass
 class SourceTypes:
@@ -222,6 +224,93 @@ class LoadStreams:
     def __len__(self) -> int:
         """Return the number of video streams in the LoadStreams object."""
         return self.bs  # 1E12 frames = 32 streams at 30 FPS for 30 years
+
+class LoadImagesfromTXT:	# class LoadImagesAndVideos:
+    """
+    Load images from a text file containing image paths.
+
+    This class is used to load images for YOLO object detection from a text file. Each line in the text file should
+    contain the path to an image file. The class handles loading and pre-processing of the images.
+
+    Attributes:
+        path (str): Path to the text file containing image paths.
+        mode (str): Type of data being processed, set to 'image'.
+        bs (int): Batch size, equivalent to the length of `im0`.
+
+    Methods:
+        __iter__: Returns an iterator object for loading images.
+        __next__: Returns the next batch of images and their paths.
+
+    Examples:
+        >>> loader = LoadImagesfromTXT("path/to/images.txt")
+        >>> for paths, imgs, _ in loader:
+        ...     # Process the images
+        ...     pass
+    """
+
+    def __init__(self, path, batch=1, imgmode=IMAGE_MODE):
+        """Initializes a loader for images from a text file."""
+        self.path = path
+        self.bs = batch
+        self.mode = "image"
+        self.imgmode = imgmode
+        parent = None
+        if isinstance(path, str) and Path(path).suffix == ".txt":  # *.txt file with img/vid/dir on each line
+            parent = Path(path).parent
+            path = Path(path).read_text().splitlines()
+        files = []
+        for p in sorted(path) if isinstance(path, (list, tuple)) else [path]:
+            a = str(parent / Path(re.sub(r"(/images/)", rf"\1{imgmode[0]}/", p)))  # do not use .resolve() https://github.com/ultralytics/ultralytics/issues/2912
+            if os.path.isfile(a):
+                files.append(str(parent / Path(p)))
+            else:
+                raise FileNotFoundError(f"{a} does not exist")
+            
+        self.files = files
+        self.nf = len(files)
+        if self.nf == 0:
+            raise FileNotFoundError(f"No images found in {p}. {FORMATS_HELP_MSG}")
+        
+    def __iter__(self):
+        """Iterates through image files, yielding source paths, images, and metadata."""
+        self.count = 0
+        return self
+
+    def __next__(self):
+        """Returns the next batch of images with their paths and metadata."""
+        paths, imgs, info = [], [], []
+        while len(imgs) < self.bs:
+            if self.count >= self.nf:  # end of file list
+                if imgs:
+                    return paths, imgs, info  # return last partial batch
+                else:
+                    raise StopIteration
+
+            path = self.files[self.count]
+            
+            # Handle image files (including HEIC)
+            imgset = []
+            for m in self.imgmode:
+                f = re.sub(r"(/images/)", rf"\1{m}/", path)                                  # modifided
+                imt = imread(f, cv2.IMREAD_GRAYSCALE)  # grayscale # BGR
+                imgset.append(imt)
+            im = np.ascontiguousarray(np.array(imgset).transpose(1, 2, 0))
+            if im is None:
+                LOGGER.warning(f"WARNING ⚠️ Image Read Error {path}")
+            else:
+                paths.append(path)
+                imgs.append(im)
+                info.append(f"image {self.count + 1}/{self.nf} {path}: ")
+            self.count += 1  # move to the next file
+            if self.count >= self.nf:  # end of image list
+                break
+
+        return paths, imgs, info
+    
+    def __len__(self):
+        """Returns the number of files (images) in the dataset."""
+        return math.ceil(self.nf / self.bs)  # number of batches
+
 
 
 class LoadScreenshots:
@@ -705,4 +794,4 @@ def get_best_youtube_url(url: str, method: str = "pytube") -> Optional[str]:
 
 
 # Define constants
-LOADERS = (LoadStreams, LoadPilAndNumpy, LoadImagesAndVideos, LoadScreenshots)
+LOADERS = (LoadStreams, LoadPilAndNumpy, LoadImagesAndVideos, LoadScreenshots, LoadImagesfromTXT)

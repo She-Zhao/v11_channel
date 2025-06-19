@@ -25,6 +25,10 @@ from ultralytics.data.utils import IMG_FORMATS, PIN_MEMORY, VID_FORMATS
 from ultralytics.utils import RANK, colorstr
 from ultralytics.utils.checks import check_file
 
+from ultralytics.data.dataset import YOLOMultiIMGDataset
+from ultralytics.data.loaders import (
+    LoadImagesfromTXT,
+)
 
 class InfiniteDataLoader(dataloader.DataLoader):
     """
@@ -113,7 +117,9 @@ def seed_worker(worker_id: int):  # noqa
 
 def build_yolo_dataset(cfg, img_path, batch, data, mode="train", rect=False, stride=32, multi_modal=False):
     """Build and return a YOLO dataset based on configuration parameters."""
-    dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
+    # dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
+    # import pdb; pdb.set_trace()
+    dataset = YOLOMultiModalDataset if multi_modal else YOLOMultiIMGDataset if cfg.multi_img else YOLODataset
     return dataset(
         img_path=img_path,
         imgsz=cfg.imgsz,
@@ -275,7 +281,8 @@ def load_inference_source(source=None, batch: int = 1, vid_stride: int = 1, buff
     elif from_img:
         dataset = LoadPilAndNumpy(source, channels=channels)
     else:
-        dataset = LoadImagesAndVideos(source, batch=batch, vid_stride=vid_stride, channels=channels)
+        # dataset = LoadImagesAndVideos(source, batch=batch, vid_stride=vid_stride, channels=channels)
+        dataset = LoadImagesfromTXT(source, batch=batch)
 
     # Attach source types to the dataset
     setattr(dataset, "source_type", source_type)

@@ -370,7 +370,7 @@ class DetectionModel(BaseModel):
         >>> results = model.predict(image_tensor)
     """
 
-    def __init__(self, cfg="yolo11n.yaml", ch=3, nc=None, verbose=True):
+    def __init__(self, cfg="yolo11n.yaml", ch=4, nc=None, verbose=True):
         """
         Initialize the YOLO detection model with the given config and parameters.
 

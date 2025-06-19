@@ -173,7 +173,8 @@ def verify_image(args: Tuple) -> Tuple:
         nf = 1
     except Exception as e:
         nc = 1
-        msg = f"{prefix}{im_file}: ignoring corrupt image/label: {e}"
+        # import pdb; pdb.set_trace()
+        msg = f"{prefix}{im_file}: ignor>>>ing corrupt image/label: {e}"
     return (im_file, cls), nf, nc, msg
 
 
@@ -246,7 +247,8 @@ def verify_image_label(args: Tuple) -> List:
         return im_file, lb, shape, segments, keypoints, nm, nf, ne, nc, msg
     except Exception as e:
         nc = 1
-        msg = f"{prefix}{im_file}: ignoring corrupt image/label: {e}"
+        # import pdb; pdb.set_trace()
+        msg = f"{prefix}{im_file}: ig>>>>noring corrupt image/label: {e}"
         return [None, None, None, None, None, nm, nf, ne, nc, msg]
 
 
@@ -399,7 +401,7 @@ def check_det_dataset(dataset: str, autodownload: bool = True) -> Dict:
         (Dict): Parsed dataset information and paths.
     """
     file = check_file(dataset)
-
+    
     # Download (optional)
     extract_dir = ""
     if zipfile.is_zipfile(file) or is_tarfile(file):
@@ -408,6 +410,7 @@ def check_det_dataset(dataset: str, autodownload: bool = True) -> Dict:
         extract_dir, autodownload = file.parent, False
 
     # Read YAML
+    # import pdb; pdb.set_trace()
     data = YAML.load(file, append_filename=True)  # dictionary
 
     # Checks
@@ -429,6 +432,7 @@ def check_det_dataset(dataset: str, autodownload: bool = True) -> Dict:
         data["nc"] = len(data["names"])
 
     data["names"] = check_class_names(data["names"])
+    # import pdb; pdb.set_trace()
     data["channels"] = data.get("channels", 3)  # get image channels, default to 3
 
     # Resolve paths

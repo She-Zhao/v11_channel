@@ -179,6 +179,7 @@ class DetectionValidator(BaseValidator):
             preds (List[torch.Tensor]): List of predictions from the model.
             batch (Dict[str, Any]): Batch data containing ground truth.
         """
+        # import pdb; pdb.set_trace()
         for si, pred in enumerate(preds):
             self.seen += 1
             npr = len(pred)
@@ -241,6 +242,7 @@ class DetectionValidator(BaseValidator):
         Returns:
             (Dict[str, Any]): Dictionary containing metrics results.
         """
+        # import pdb; pdb.set_trace()
         stats = {k: torch.cat(v, 0).cpu().numpy() for k, v in self.stats.items()}  # to numpy
         self.nt_per_class = np.bincount(stats["target_cls"].astype(int), minlength=self.nc)
         self.nt_per_image = np.bincount(stats["target_img"].astype(int), minlength=self.nc)

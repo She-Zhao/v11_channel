@@ -1691,12 +1691,7 @@ class LetterBox:
         top, bottom = int(round(dh - 0.1)) if self.center else 0, int(round(dh + 0.1))
         left, right = int(round(dw - 0.1)) if self.center else 0, int(round(dw + 0.1))
         h, w, c = img.shape
-        if c == 3:
-            img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
-        else:  # multispectral
-            pad_img = np.full((h + top + bottom, w + left + right, c), fill_value=114, dtype=img.dtype)
-            pad_img[top : top + h, left : left + w] = img
-            img = pad_img
+
 
         if labels.get("ratio_pad"):
             labels["ratio_pad"] = (labels["ratio_pad"], (left, top))  # for evaluation

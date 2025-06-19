@@ -17,7 +17,7 @@ from ultralytics.utils import LOCAL_RANK, LOGGER, NUM_THREADS, TQDM, colorstr
 from ultralytics.utils.instance import Instances
 from ultralytics.utils.ops import resample_segments, segments2boxes
 from ultralytics.utils.torch_utils import TORCHVISION_0_18
-
+# NUM_THREADS = 1
 from .augment import (
     Compose,
     Format,
@@ -40,8 +40,101 @@ from .utils import (
     verify_image_label,
 )
 
+import math
+import os
+import re
+
+from PIL import ImageOps
+from ultralytics.utils.ops import segments2boxes
+
+from .utils import (
+    FORMATS_HELP_MSG,
+    IMG_FORMATS,
+    exif_size,
+)
+
+
 # Ultralytics dataset *.cache version, >= 1.0.0 for Ultralytics YOLO models
 DATASET_CACHE_VERSION = "1.0.3"
+
+# IMAGE_MODE = ['16col1_test', '16col2_test', '16row1_test', '16row2_test'] # 'GC0', 'GC1', 'GC2', 'GC3', 'GC4',            # modifided
+IMAGE_MODE = ['16col1', '16col2', '16row1', '16row2'] 
+
+def verify_multi_image_label(args):
+    """Verify one image-label pair."""
+    # import pdb; pdb.set_trace()
+    im_file, lb_file, prefix, keypoint, num_cls, nkpt, ndim = args
+    file_name = im_file                                                                             # modifided
+    # Number (missing, found, empty, corrupt), message, segments, keypoints
+    nm, nf, ne, nc, msg, segments, keypoints = 0, 0, 0, 0, "", [], None
+    try:
+        # Verify images
+        for m in IMAGE_MODE:                                                                        # modifided
+            # im_file = re.sub(r"(/images/)", rf"\1{m}/", file_name)                                  # modifided
+            im_file = str(Path(file_name).parent.parent / m / Path(file_name).name)
+            im = Image.open(im_file)
+            im.verify()  # PIL verify
+            shape = exif_size(im)  # image size
+            shape = (shape[1], shape[0])  # hw
+            assert (shape[0] > 9) & (shape[1] > 9), f"image size {shape} <10 pixels"
+            assert im.format.lower() in IMG_FORMATS, f"invalid image format {im.format}. {FORMATS_HELP_MSG}"
+            if im.format.lower() in {"jpg", "jpeg"}:
+                with open(im_file, "rb") as f:
+                    f.seek(-2, 2)
+                    if f.read() != b"\xff\xd9":  # corrupt JPEG
+                        ImageOps.exif_transpose(Image.open(im_file)).save(im_file, "JPEG", subsampling=0, quality=100)
+                        msg = f"{prefix}WARNING ⚠️ {im_file}: corrupt JPEG restored and saved"
+        im_file = file_name                                                                         # modifided
+
+        # Verify labels
+        if os.path.isfile(lb_file):
+            nf = 1  # label found
+            with open(lb_file, encoding="utf-8") as f:
+                lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
+                if any(len(x) > 6 for x in lb) and (not keypoint):  # is segment
+                    classes = np.array([x[0] for x in lb], dtype=np.float32)
+                    segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
+                    lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+                lb = np.array(lb, dtype=np.float32)
+            if nl := len(lb):
+                if keypoint:
+                    assert lb.shape[1] == (5 + nkpt * ndim), f"labels require {(5 + nkpt * ndim)} columns each"
+                    points = lb[:, 5:].reshape(-1, ndim)[:, :2]
+                else:
+                    assert lb.shape[1] == 5, f"labels require 5 columns, {lb.shape[1]} columns detected"
+                    points = lb[:, 1:]
+                assert points.max() <= 1, f"non-normalized or out of bounds coordinates {points[points > 1]}"
+                assert lb.min() >= 0, f"negative label values {lb[lb < 0]}"
+
+                # All labels
+                max_cls = lb[:, 0].max()  # max label count
+                assert max_cls < num_cls, (
+                    f"Label class {int(max_cls)} exceeds dataset class count {num_cls}. "
+                    f"Possible class labels are 0-{num_cls - 1}"
+                )
+                _, i = np.unique(lb, axis=0, return_index=True)
+                if len(i) < nl:  # duplicate row check
+                    lb = lb[i]  # remove duplicates
+                    if segments:
+                        segments = [segments[x] for x in i]
+                    msg = f"{prefix}WARNING ⚠️ {im_file}: {nl - len(i)} duplicate labels removed"
+            else:
+                ne = 1  # label empty
+                lb = np.zeros((0, (5 + nkpt * ndim) if keypoint else 5), dtype=np.float32)
+        else:
+            nm = 1  # label missing
+            lb = np.zeros((0, (5 + nkpt * ndim) if keypoints else 5), dtype=np.float32)
+        if keypoint:
+            keypoints = lb[:, 5:].reshape(-1, nkpt, ndim)
+            if ndim == 2:
+                kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
+                keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
+        lb = lb[:, :5]
+        return im_file, lb, shape, segments, keypoints, nm, nf, ne, nc, msg
+    except Exception as e:
+        nc = 1
+        msg = f"{prefix}WARNING ⚠️ {im_file}: ignoring corrupt image/label: {e}"
+        return [None, None, None, None, None, nm, nf, ne, nc, msg]
 
 
 class YOLODataset(BaseDataset):
@@ -833,3 +926,161 @@ class ClassificationDataset:
             x["msgs"] = msgs  # warnings
             save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
             return samples
+
+class YOLOMultiIMGDataset(YOLODataset):	# class YOLODataset(BaseDataset):
+    """
+    Dataset class for loading object detection labels in YOLO format.
+    
+    Args:
+        data (dict, optional): A dataset YAML dictionary. Defaults to None.
+        task (str): An explicit arg to point current task, Defaults to 'detect'.
+
+    Returns:
+        (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an object detection model.
+    """
+    
+    def __init__(self, *args, data=None, task="detect", **kwargs):
+        """Initializes a dataset object for object detection tasks with optional specifications."""
+        super().__init__(*args, data=data, task=task, **kwargs)
+        self.cnn3d = kwargs['hyp'].get('3dcnn')
+    
+    def cache_labels(self, path=Path("./labels.cache")):
+        """
+        Cache dataset labels, check images and read shapes.
+
+        Args:
+            path (Path): Path where to save the cache file. Default is Path("./labels.cache").
+
+        Returns:
+            (dict): labels.
+        """
+        x = {"labels": []}
+        nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number missing, found, empty, corrupt, messages
+        desc = f"{self.prefix}Scanning {path.parent / path.stem}..."
+        total = len(self.im_files)
+        nkpt, ndim = self.data.get("kpt_shape", (0, 0))
+        if self.use_keypoints and (nkpt <= 0 or ndim not in {2, 3}):
+            raise ValueError(
+                "'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
+                "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'"
+            )
+        # import pdb; pdb.set_trace()
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(
+                func=verify_multi_image_label,                                                  # modifided
+                iterable=zip(
+                    self.im_files,
+                    self.label_files,
+                    repeat(self.prefix),
+                    repeat(self.use_keypoints),
+                    repeat(len(self.data["names"])),
+                    repeat(nkpt),
+                    repeat(ndim),
+                ),
+            )
+            pbar = TQDM(results, desc=desc, total=total)
+            for im_file, lb, shape, segments, keypoint, nm_f, nf_f, ne_f, nc_f, msg in pbar:
+                nm += nm_f
+                nf += nf_f
+                ne += ne_f
+                nc += nc_f
+                if im_file:
+                    x["labels"].append(
+                        {
+                            "im_file": im_file,
+                            "shape": shape,
+                            "cls": lb[:, 0:1],  # n, 1
+                            "bboxes": lb[:, 1:],  # n, 4
+                            "segments": segments,
+                            "keypoints": keypoint,
+                            "normalized": True,
+                            "bbox_format": "xywh",
+                        }
+                    )
+                if msg:
+                    msgs.append(msg)
+                pbar.desc = f"{desc} {nf} images, {nm + ne} backgrounds, {nc} corrupt"
+            pbar.close()
+
+        if msgs:
+            LOGGER.info("\n".join(msgs))
+        if nf == 0:
+            LOGGER.warning(f"{self.prefix}WARNING ⚠️ No labels found in {path}. {HELP_URL}")
+        x["hash"] = get_hash(self.label_files + self.im_files)
+        x["results"] = nf, nm, ne, nc, len(self.im_files)
+        x["msgs"] = msgs  # warnings
+        save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+        return x
+    
+    def load_image(self, i, rect_mode=True):
+        """Loads 1 image from dataset index 'i', returns (im, resized hw)."""
+        im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
+        if im is None:  # not cached in RAM
+            if fn.exists():  # load npy
+                try:
+                    im = np.load(fn)
+                except Exception as e:
+                    LOGGER.warning(f"{self.prefix}WARNING ⚠️ Removing corrupt *.npy image file {fn} due to: {e}")
+                    Path(fn).unlink(missing_ok=True)
+                    im = cv2.imread(f)  # BGR
+            else:  # read image
+                # Modified --------------------------------------------------------------------------------- #
+                imgs = []
+                ft = f
+                base_path = Path(ft).parent.parent                                             # modifided 获取到 train 目录                
+                for m in IMAGE_MODE:                                                           # modifided
+                    f = base_path / m / Path(ft).name  # 正确拼接路径
+                    # f = re.sub(r"(/images/)", rf"\1{m}/", ft)                                  # modifided
+                    imt = cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)  # grayscale
+                    imgs.append(imt)
+                im = np.array(imgs).transpose(1, 2, 0)
+                # End -------------------------------------------------------------------------------------- #
+                # Previous --------------------------------------------------------------------------------- #
+                # im = cv2.imread(f)  # BGR
+                # End -------------------------------------------------------------------------------------- #
+            if im is None:
+                raise FileNotFoundError(f"Image Not Found {f}")
+
+            h0, w0 = im.shape[:2]  # orig hw
+            if rect_mode:  # resize long side to imgsz while maintaining aspect ratio
+                r = self.imgsz / max(h0, w0)  # ratio
+                if r != 1:  # if sizes are not equal
+                    w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
+                    im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+            elif not (h0 == w0 == self.imgsz):  # resize by stretching image to square imgsz
+                im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
+
+            # Add to buffer if training with augmentations
+            if self.augment:
+                self.ims[i], self.im_hw0[i], self.im_hw[i] = im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
+                self.buffer.append(i)
+                if 1 < len(self.buffer) >= self.max_buffer_length:  # prevent empty buffer
+                    j = self.buffer.pop(0)
+                    if self.cache != "ram":
+                        self.ims[j], self.im_hw0[j], self.im_hw[j] = None, None, None
+
+            if self.cnn3d:
+                im = im.transpose(2, 0, 1)
+            
+            return im, (h0, w0), im.shape[:2]
+
+        return self.ims[i], self.im_hw0[i], self.im_hw[i]
+
+    @staticmethod
+    def collate_fn(batch):
+        """Collates data samples into batches."""
+        new_batch = {}
+        keys = batch[0].keys()
+        values = list(zip(*[list(b.values()) for b in batch]))
+        for i, k in enumerate(keys):
+            value = values[i]
+            if k == "img":
+                value = torch.stack(value, 0)
+            if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb"}:
+                value = torch.cat(value, 0)
+            new_batch[k] = value
+        new_batch["batch_idx"] = list(new_batch["batch_idx"])
+        for i in range(len(new_batch["batch_idx"])):
+            new_batch["batch_idx"][i] += i  # add target image index for build_targets()
+        new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
+        return new_batch

@@ -153,7 +153,6 @@ class BaseTrainer:
             self.data = self.get_dataset()
 
         self.ema = None
-
         # Optimization utils init
         self.lf = None
         self.scheduler = None
@@ -403,6 +402,7 @@ class BaseTrainer:
                 # Forward
                 with autocast(self.amp):
                     batch = self.preprocess_batch(batch)
+                    import pdb; pdb.set_trace()
                     loss, self.loss_items = self.model(batch)
                     self.loss = loss.sum()
                     if RANK != -1:
@@ -595,6 +595,7 @@ class BaseTrainer:
         Returns:
             (dict): A dictionary containing the training/validation/test dataset and category names.
         """
+        print('>>>>>>>>>>>>>>>>>>>>>>>>>>')
         try:
             if self.args.task == "classify":
                 data = check_cls_dataset(self.args.data)

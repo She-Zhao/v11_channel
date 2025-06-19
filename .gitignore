@@ -145,6 +145,8 @@ dmypy.json
 runs/
 det
 wandb/
+datasets_multi
+datasets_yolo
 .DS_Store
 
 # Neural Network weights -----------------------------------------------------------------------------------------------
@@ -175,3 +177,6 @@ pnnx*
 
 # calibration image
 calibration_*.npy
+
+# 测试文件
+test*
